@@ -1,0 +1,189 @@
+#!/usr/bin/python3
+import argparse
+import csv
+import datetime
+import os
+import subprocess
+import sys
+import time
+import requests
+
+# for convenience
+DEVNULL = open(os.devnull, 'w')
+# it's what we need to get unix times
+os.environ['SLURM_TIME_FORMAT']="%s"
+
+# prometheus server to query
+PROM_SERVER="http://vigilant:8480"
+
+# run a query against prometheus
+def run_query(q, start=None, end=None, time=None, step=60):
+    params = {
+            'query': q,
+    }
+    if start:
+        params['start'] = start
+        params['end'] = end
+        params['step'] = step
+        qstr = 'query_range'
+    else:
+        qstr = 'query'
+        if time:
+            params['time'] = time
+
+    response = requests.get('{0}/api/v1/{1}'.format(PROM_SERVER, qstr), params)
+    return response.json()
+
+# Get basic info from sacct
+def get_job_info(jobid, cluster=None):
+    cmd = ["sacct","-P","-X","-o","start,end,reqtres","-j",jobid]
+    if cluster:
+        cmd += ["-M",cluster]
+    start_time = None
+    end_time = None
+    for i in csv.DictReader(subprocess.check_output(cmd,stderr=DEVNULL).decode("utf-8").split('\n'), delimiter='|'):
+        start_time = i.get('Start',None)
+        end_time = i.get('End',None)
+        tres = i.get('ReqTRES',None)
+    gpus = tres != None and 'gres/gpu=' in tres and 'gres/gpu=0,' not in tres
+    # currently running jobs will have Unknown as time
+    if end_time == 'Unknown':
+        end_time=time.time()
+    else:
+        if not end_time.isnumeric():
+            return [None, None, None]
+    if not start_time.isnumeric():
+        return [None, None, None]
+    else:
+        return [int(start_time), int(end_time), gpus]
+
+# extract info out of what was returned
+# sp = hash indexed by node
+# d  = data returned from prometheus
+# n  = what name to give this data
+#{'metric': {'__name__': 'cgroup_memory_total_bytes', 'cluster': 'stellar', 'instance': 'stellar-m02n30:9306', 'job': 'Stellar Nodes', 'jobid': '50783'}, 'values': [[1629592582, '536870912000']]}
+# or
+#{'metric': {'cluster': 'stellar', 'instance': 'stellar-m06n4:9306', 'job': 'Stellar Nodes', 'jobid': '50783'}, 'value': [1629592575, '190540828672']}
+def get_data_out(sp, d, n):
+    if 'data' in d:
+        j = d['data']['result']
+        for i in j:
+            node=i['metric']['instance'].split(':')[0]
+            minor = i['metric'].get('minor_number', None)
+            if 'value' in i:
+                v=i['value'][1]
+            if 'values' in i:
+                v=i['values'][0][0]
+            if node not in sp:
+                sp[node] = {}
+            if minor != None:
+                if n not in sp[node]:
+                    sp[node][n] = {}
+                sp[node][n][minor] = v
+            else:
+                sp[node][n] = v
+
+def get_data(sp, where, query, jobid, start, end):
+    j = run_query(query, time=end)
+    get_data_out(sp, j, where)
+
+def human_bytes(size, decimal_places=1):
+    size=float(size)
+    for unit in ['B','KB','MB','GB','TB']:
+        if size < 1024.0:
+            break
+        size /= 1024.0
+    return f"{size:.{decimal_places}f}{unit}"
+
+
+def human_seconds(seconds):
+    hour = seconds // 3600
+    if hour >= 24:
+        days = "%d-" % (hour // 24)
+        hour %= 24
+        hour = days + ("%02d:" % hour)
+    else:
+        if hour > 0:
+            hour = "%02d:" % hour
+        else:
+            hour = ''
+    seconds = seconds % (24 * 3600)
+    seconds %= 3600
+    minutes = seconds // 60
+    seconds %= 60
+    return "%s%02d:%02d" % (hour, minutes, seconds)
+
+def report_job(jobid, cluster):
+    # stats per node
+    sp_node = {}
+
+    start_time, end_time, gpus = get_job_info(jobid, cluster)
+    diff = end_time-start_time
+
+    # query CPU and Memory utilization data
+    get_data(sp_node, 'total_memory', "max_over_time(cgroup_memory_total_bytes{jobid='%s',step='',task=''}[%ds])" %(jobid, diff), jobid, start_time, end_time)
+    get_data(sp_node, 'used_memory', "max_over_time(cgroup_memory_used_bytes{jobid='%s',step='',task=''}[%ds])" %(jobid, diff), jobid, start_time, end_time)
+    get_data(sp_node, 'total_time', "max_over_time(cgroup_cpu_total_seconds{jobid='%s',step='',task=''}[%ds])" %(jobid, diff), jobid, start_time, end_time)
+    get_data(sp_node, 'cpus', "max_over_time(cgroup_cpus{jobid='%s',step='',task=''}[%ds])" %(jobid, diff), jobid, start_time, end_time)
+
+    # and now GPUs
+    if gpus:
+        get_data(sp_node, 'gpu_total_memory', "max_over_time((nvidia_gpu_memory_total_bytes and nvidia_gpu_jobId == %s)[%ds:])" %(jobid, diff), jobid, start_time, end_time)
+        get_data(sp_node, 'gpu_used_memory', "max_over_time((nvidia_gpu_memory_used_bytes and nvidia_gpu_jobId == %s)[%ds:])" %(jobid, diff), jobid, start_time, end_time)
+        get_data(sp_node, 'gpu_utilization', "avg_over_time((nvidia_gpu_duty_cycle and nvidia_gpu_jobId == %s)[%ds:])" %(jobid, diff), jobid, start_time, end_time)
+    total = 0
+    total_used = 0
+    total_cores = 0
+    print("Memory usage per node - used/allocated")
+    for n in sp_node:
+        used = int(sp_node[n]['used_memory'])
+        alloc = int(sp_node[n]['total_memory'])
+        cores = int(sp_node[n]['cpus'])
+        total += alloc
+        total_used += used
+        total_cores += cores
+        used = float(used)
+        alloc = float(alloc)
+        print("    %s: %s/%s (%s/%s per core of %d)" %(n, human_bytes(used), human_bytes(alloc), human_bytes(used*1.0/cores), human_bytes(alloc*1.0/cores), cores))
+    print("Total used/allocated: %s/%s (%s/%s per core of %d)" %(human_bytes(total_used), human_bytes(total), human_bytes(total_used*1.0/total_cores), human_bytes(total*1.0/total_cores), total_cores))
+    print()
+    total = 0
+    total_used = 0
+    print("CPU Usage per node (cpu time used/runtime)")
+    for n in sp_node:
+        used = float(sp_node[n]['total_time'])
+        alloc = (int(end_time)-int(start_time))*int(sp_node[n]['cpus'])
+        total += alloc
+        total_used += used
+        print("    %s: %s/%s (efficiency=%.2f%%)" %(n, human_seconds(used), human_seconds(alloc), 100*used/alloc))
+    print("Total used/runtime: %s/%s, efficiency=%.2f%%" %(human_seconds(total_used),human_seconds(total),100*total_used/total))
+
+    if gpus:
+        print()
+        print("GPU Memory utilization, per node(GPU) - maximum used/total")
+        for n in sp_node:
+            d = sp_node[n]
+            gpus = list(d['gpu_total_memory'].keys())
+            gpus.sort()
+            for g in gpus:
+                used = float(d['gpu_used_memory'][g])
+                total = float(d['gpu_total_memory'][g])
+                print("    %s(GPU#%s): %s/%s (%.1f%%)" %(n, g, human_bytes(used), human_bytes(total),used*100/total))
+        print()
+        print("GPU Utilization, per node(GPU) - average in percents")
+        for n in sp_node:
+            d = sp_node[n]
+            gpus = list(d['gpu_utilization'].keys())
+            for g in gpus:
+                util = float(d['gpu_utilization'][g])
+                print("    %s(GPU#%s): %.1f/100" %(n, g, util))
+
+parser = argparse.ArgumentParser(description="Show job utilization.")
+parser.add_argument('job', metavar='job', nargs='*',
+                    help='Job numbers to lookup')
+parser.add_argument("-c", "--cluster", default=None,
+                    help="Specify cluster instead of relying on default on the current machine.")
+args = parser.parse_args()
+
+for jobid in args.job:
+    report_job(jobid, args.cluster)
