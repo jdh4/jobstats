@@ -23,8 +23,9 @@ PROM_SERVER="http://vigilant:8480"
 class JobStats:
     # initialize basic job stats, can be called either with those stats
     # provided and if not it will fetch them
-    def __init__(self, jobid=None, jobidraw=None, start=None, end=None, gpus=None, cluster=None):
+    def __init__(self, jobid=None, jobidraw=None, start=None, end=None, gpus=None, cluster=None, debug=False):
         self.cluster = cluster
+        self.debug = debug
         self.sp_node = {}
         if jobidraw == None:
             self.jobid = jobid
@@ -40,6 +41,11 @@ class JobStats:
             self.gpus = gpus
             self.data = None
         self.diff = self.end - self.start
+        # for tiger data is collected as tiger but slurm cluster name is tiger2
+        if self.cluster == "tiger2":
+            self.cluster = "tiger"
+        if self.debug:
+            print("DEBUG: jobid=%s, jobidraw=%s, start=%s, end=%s, gpus=%s, diff=%s, cluster=%s, data=%s" %(self.jobid,self.jobidraw,self.start,self.end,self.gpus,self.diff,self.cluster,self.data))
         if self.data != None and self.data.startswith('JS1:') and len(self.data)>10:
             try:
                 t = json.loads(gzip.decompress(base64.b64decode(self.data[4:])))
@@ -151,10 +157,14 @@ class JobStats:
             return response.json()
         
         expanded_query = query%(self.cluster, self.jobidraw, self.diff)
+        if self.debug:
+            print("DEBUG: query=%s, time=%s" %(expanded_query,self.end))
         try:
             j = __run_query(expanded_query, time=self.end)
         except Exception as e:
             self.error("ERROR: Failed to query jobstats database, got error: %s:" % e)
+        if self.debug:
+            print("DEBUG: query result=%s" % j)
         if j["status"] == 'success':
             self.get_data_out(j, where)
         elif j["status"] == 'error':
@@ -278,10 +288,12 @@ if __name__ == "__main__":
                     help="Produce row data in json format, with no summary.")
     parser.add_argument("-b", "--base64", action='store_true', default=False,
                     help="Produce row data in json format, with no summary and also gzip and encode it in base64 output for db storage.")
+    parser.add_argument("-d", "--debug", action='store_true', default=False,
+                    help="Output debugging information.")
     args = parser.parse_args()
 
     for jobid in args.job:
-        stats = JobStats(jobid=jobid, cluster=args.cluster)
+        stats = JobStats(jobid=jobid, cluster=args.cluster, debug=args.debug)
         if args.json or args.base64:
             print(stats.report_job_json(args.base64))
         else:
