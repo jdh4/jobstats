@@ -63,7 +63,7 @@ CPU Usage per node (cpu time used/runtime)
 Total used/runtime: 07:52:18/08:00:08, efficiency=98.4%
 ```
 
-jobid vs. jobidraw
+## jobid vs. jobidraw
 
 ```
 $ sacct -j 39861033 -o jobid%30,jobidraw%30
@@ -72,5 +72,13 @@ $ sacct -j 39861033 -o jobid%30,jobidraw%30
                       39861033                       39861033 
                 39861033.batch                 39861033.batch 
                39861033.extern                39861033.extern 
-                    39861033.0                     39861033.0 
+                    39861033.0                     39861033.0
+
+$ sacct -j 40345776_97 -o jobid%30,jobidraw%30
+                         JobID                       JobIDRaw 
+------------------------------ ------------------------------ 
+                   40345776_97                       40356660 
+             40345776_97.batch                 40356660.batch 
+            40345776_97.extern                40356660.extern 
+                 40345776_97.0                     40356660.0 
 ```
