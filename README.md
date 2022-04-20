@@ -62,3 +62,15 @@ CPU Usage per node (cpu time used/runtime)
     della-r2c1n16: 07:52:18/08:00:08 (efficiency=98.4%)
 Total used/runtime: 07:52:18/08:00:08, efficiency=98.4%
 ```
+
+jobid vs. jobidraw
+
+```
+$ sacct -j 39861033 -o jobid%30,jobidraw%30
+                         JobID                       JobIDRaw 
+------------------------------ ------------------------------ 
+                      39861033                       39861033 
+                39861033.batch                 39861033.batch 
+               39861033.extern                39861033.extern 
+                    39861033.0                     39861033.0 
+```
