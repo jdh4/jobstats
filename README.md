@@ -5,6 +5,10 @@
 [https://prometheus.io/docs/instrumenting/exporters/](https://prometheus.io/docs/instrumenting/exporters/)  
 
 
+## issues
+
+Crashes when try to make a jobstats  object without jobid
+
 ## demo
 
 ```
