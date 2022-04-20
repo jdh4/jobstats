@@ -53,6 +53,10 @@ Type "help", "copyright", "credits" or "license" for more information.
 ```
 
 ```
+{'tiger-i19g12': {'total_memory': 68719476736, 'used_memory': 1875886080, 'total_time': 221.7, 'cpus': 16, 'gpu_total_memory': {'3': 17071734784, '2': 17071734784, '1': 17071734784, '0': 17071734784}, 'gpu_used_memory': {'1': 414318592, '0': 16717578240, '2': 414318592, '3': 414318592}, 'gpu_utilization': {'1': 0, '3': 0.3, '2': 0, '0': 87.1}}}
+```
+
+```
 $ jobstats 39861033
 Memory usage per node - used/allocated
     della-r2c1n16: 25.3GB/64.0GB (3.2GB/8.0GB per core of 8)
