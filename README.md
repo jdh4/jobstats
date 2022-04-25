@@ -64,6 +64,44 @@ Type "help", "copyright", "credits" or "license" for more information.
 {'tiger-i19g12': {'total_memory': 68719476736, 'used_memory': 1875886080, 'total_time': 221.7, 'cpus': 16, 'gpu_total_memory': {'3': 17071734784, '2': 17071734784, '1': 17071734784, '0': 17071734784}, 'gpu_used_memory': {'1': 414318592, '0': 16717578240, '2': 414318592, '3': 414318592}, 'gpu_utilization': {'1': 0, '3': 0.3, '2': 0, '0': 87.1}}}
 ```
 
+#### json.loads return a Python dict
+
+There are three attributes at the highest level:
+
+```
+t['nodes'], t['total_time'], t['gpus']
+```
+
+```
+>>> pprint.pprint(t)
+{'gpus': True,
+ 'nodes': {'della-i14g11': {'cpus': 10,
+                            'gpu_total_memory': {'0': 42949672960},
+                            'gpu_used_memory': {'0': 638058496},
+                            'gpu_utilization': {'0': 0},
+                            'total_memory': 42949672960,
+                            'total_time': 29202.2,
+                            'used_memory': 1102004224},
+           'della-i14g13': {'cpus': 10,
+                            'gpu_total_memory': {'0': 42949672960},
+                            'gpu_used_memory': {'0': 638058496},
+                            'gpu_utilization': {'0': 0},
+                            'total_memory': 42949672960,
+                            'total_time': 29195.8,
+                            'used_memory': 1107677184},
+           'della-i14g4': {'gpu_total_memory': {'0': 42949672960},
+                           'gpu_used_memory': {'0': 638058496},
+                           'gpu_utilization': {'0': 0}},
+           'della-i14g6': {'cpus': 10,
+                           'gpu_total_memory': {'0': 42949672960},
+                           'gpu_used_memory': {'0': 638058496},
+                           'gpu_utilization': {'0': 0},
+                           'total_memory': 42949672960,
+                           'total_time': 29139.5,
+                           'used_memory': 1102434304}},
+ 'total_time': 29297}
+```
+
 ```
 $ jobstats 39861033
 Memory usage per node - used/allocated
