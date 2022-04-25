@@ -73,6 +73,20 @@ t['nodes'], t['total_time'], t['gpus']
 ```
 
 ```
+[jdh4@della8 ~]$ jobstats 40409215
+Memory usage per node - used/allocated
+    della-i14g11: 1.0GB/40.0GB (105.1MB/4.0GB per core of 10)
+    della-i14g13: 1.0GB/40.0GB (105.6MB/4.0GB per core of 10)
+    della-i14g6: 1.0GB/40.0GB (105.1MB/4.0GB per core of 10)
+Traceback (most recent call last):
+  File "/usr/local/bin/jobstats", line 300, in <module>
+    stats.report_job()
+  File "/usr/local/bin/jobstats", line 226, in report_job
+    used = sp_node[n]['used_memory']
+KeyError: 'used_memory'
+```
+
+```
 >>> pprint.pprint(t)
 {'gpus': True,
  'nodes': {'della-i14g11': {'cpus': 10,
