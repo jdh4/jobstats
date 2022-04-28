@@ -154,3 +154,41 @@ $ sacct -j 40345776_98 -o jobid%30,jobidraw%30
             40345776_98.extern                40356661.extern 
                  40345776_98.0                     40356661.0
 ```
+
+## busted
+
+```
+# tiger
+$ jobstats 8448964
+Memory usage per node - used/allocated
+    tiger-i19g10: 178.5MB/32.0GB (8.9MB/1.6GB per core of 20)
+    tiger-i20g14: 0.0B/32.0GB (0.0B/1.6GB per core of 20)
+    tiger-i20g16: 0.0B/32.0GB (0.0B/1.6GB per core of 20)
+    tiger-i20g3: 0.0B/32.0GB (0.0B/1.6GB per core of 20)
+    tiger-i21g12: 0.0B/32.0GB (0.0B/1.6GB per core of 20)
+    tiger-i21g13: 0.0B/32.0GB (0.0B/1.6GB per core of 20)
+Total used/allocated: 178.5MB/192.0GB (1.5MB/1.6GB per core of 120)
+
+CPU Usage per node (cpu time used/runtime)
+    tiger-i19g10: 00:00/10:00 (efficiency=0.1%)
+    tiger-i20g14: 00:00/10:00 (efficiency=0.0%)
+    tiger-i20g16: 00:00/10:00 (efficiency=0.0%)
+    tiger-i20g3: 00:00/10:00 (efficiency=0.0%)
+    tiger-i21g12: 00:00/10:00 (efficiency=0.0%)
+    tiger-i21g13: 00:00/10:00 (efficiency=0.0%)
+Total used/runtime: 00:00/01:00:00, efficiency=0.0%
+
+GPU Memory utilization, per node(GPU) - maximum used/total
+    tiger-i19g10(GPU#0): 0.0B/15.9GB (0.0%)
+    tiger-i19g10(GPU#2): 0.0B/15.9GB (0.0%)
+    tiger-i20g14(GPU#0): 0.0B/15.9GB (0.0%)
+    tiger-i20g14(GPU#3): 0.0B/15.9GB (0.0%)
+    tiger-i20g16(GPU#0): 0.0B/15.9GB (0.0%)
+    tiger-i20g16(GPU#3): 0.0B/15.9GB (0.0%)
+Traceback (most recent call last):
+  File "/usr/local/bin/jobstats", line 300, in <module>
+    stats.report_job()
+  File "/usr/local/bin/jobstats", line 251, in report_job
+    gpus = list(d['gpu_total_memory'].keys())
+KeyError: 'gpu_total_memory'
+```
