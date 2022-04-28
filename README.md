@@ -192,3 +192,10 @@ Traceback (most recent call last):
     gpus = list(d['gpu_total_memory'].keys())
 KeyError: 'gpu_total_memory'
 ```
+
+
+```
+# trying traverse job on tiger (need to add "make sure you are on the right login node")
+$ jobstats 296059
+I found no stats for job 296059, either because it is too old or because it expired from jobstats database.
+```
