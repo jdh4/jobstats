@@ -53,6 +53,17 @@ Type "help", "copyright", "credits" or "license" for more information.
 ```
 
 ```
+$ jobstats 39861033
+Memory usage per node - used/allocated
+    della-r2c1n16: 25.3GB/64.0GB (3.2GB/8.0GB per core of 8)
+Total used/allocated: 25.3GB/64.0GB (3.2GB/8.0GB per core of 8)
+
+CPU Usage per node (cpu time used/runtime)
+    della-r2c1n16: 07:52:18/08:00:08 (efficiency=98.4%)
+Total used/runtime: 07:52:18/08:00:08, efficiency=98.4%
+```
+
+```
 >>> import json
 >>> import gzip; import base64
 >>> encoding = "H4sIAH+lZmIC/8WSywqDMBBF/yVrK5NJzMOfEalBAvGBJotW/PdGa0vFlYvicmbOzOWQTKTtKjOSfCKVca68WcprSpfad750RWOabniQnKPmWkjUAhISRlN9J5QCAnBEnmw73jaG5KgRMMWE3PsQA2jcq/tQ7M9OBHa35ze0C1gZwRRkKmIfwltnn6W3XbsRMMfRjwQ7KSGFlFQdJKjOUnWVhDj7EJxxBkcHptPsKge+tP8dOB/+npYrHoX9EMz8AoVh1T3pAgAA"
