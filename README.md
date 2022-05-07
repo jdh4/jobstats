@@ -1,5 +1,34 @@
 # jobstats
 
+## How does it work?
+
+Consider the command below:
+
+```
+$ jobstats 123456
+```
+
+The code makes a JobStats class. It then prints the report of the class.
+
+What happens when a JobStats class is made? Here is the constructor:
+
+```python
+def __init__(self, jobid=None, jobidraw=None, start=None, end=None, gpus=None, cluster=None, debug=False):
+```
+
+Right now only the jobid, cluster and debug can be set when the object is made since there is no way to pass in other parameter values such as `start`. It always has `jobidraw == None` so first step is always to call `self.__get_job_info()` calls `sacct`. Need to add user and other seff quantities here. The output is handled as CSV with a header:
+
+```
+$ sacct -P -X -o jobidraw,start,end,cluster,reqtres,admincomment -j 8554568 -M tiger2
+JobIDRaw|Start|End|Cluster|ReqTRES|AdminComment
+8554568|2022-05-07T13:02:41|Unknown|tiger2|billing=30,cpu=30,mem=120000M,node=1|
+```
+
+The output is parsed to get `gpus`, `start`, `end`, etc. `admincomment` is stored in `self.data`. This will be empty for running jobs so an explicit call to the prometheus server is later required.
+
+Note that `self.__get_job_info()` will return False is end is not Unknown or not numeric. Same if start is not numeric. These two cases result in failure of jobstats.
+
+
 ## Useful Links
 
 [https://prometheus.io/docs/instrumenting/exporters/](https://prometheus.io/docs/instrumenting/exporters/)  
