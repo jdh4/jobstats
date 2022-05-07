@@ -28,6 +28,29 @@ The output is parsed to get `gpus`, `start`, `end`, etc. `admincomment` is store
 
 Note that `self.__get_job_info()` will return False is end is not Unknown or not numeric. Same if start is not numeric. These two cases result in failure of jobstats.
 
+On return, compute the elapsed wall-clock time and convert self.data to json if sufficient payload. If self.data is empty then call prometheus using `self.get_job_stats()`. That call creates a dictionary which gets passed using `requests.get()` which returns json which is parsed in `get_data()`.
+
+Lastly, `report_job()` is called.
+
+NEW: Get netid, state, group, nn
+
+```
+Job ID: 8554568
+Cluster: tiger2
+User/Group: pa1643/cee
+State: RUNNING
+Nodes: 1
+Cores per node: 30
+CPU Utilized: 00:00:00
+CPU Efficiency: 0.00% of 1-20:57:00 core-walltime
+Job Wall-clock time: 01:29:54
+Memory Utilized: 0.00 MB (estimated maximum)
+Memory Efficiency: 0.00% of 117.19 GB (3.91 GB/core)
+WARNING: Efficiency statistics may be misleading for RUNNING jobs.
+```
+
+Now focus on format.
+
 
 ## Useful Links
 
