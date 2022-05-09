@@ -10,6 +10,7 @@ import requests
 import json
 import base64
 import gzip
+from blessed import Terminal
 
 # for convenience
 DEVNULL = open(os.devnull, 'w')
@@ -32,6 +33,7 @@ class JobStats:
             if not self.__get_job_info():
                 self.error("Failed to get details for job %s" % jobid)
         else:
+            # no way to enter this branch
             if jobid == None:
                 jobid = jobidraw
             self.jobid = jobid
@@ -45,7 +47,8 @@ class JobStats:
         if self.cluster == "tiger2":
             self.cluster = "tiger"
         if self.debug:
-            print("DEBUG: jobid=%s, jobidraw=%s, start=%s, end=%s, gpus=%s, diff=%s, cluster=%s, data=%s" %(self.jobid,self.jobidraw,self.start,self.end,self.gpus,self.diff,self.cluster,self.data))
+            print("DEBUG: jobid=%s, jobidraw=%s, start=%s, end=%s, gpus=%s, diff=%s, cluster=%s, data=%s, timelimitraw=%s" % 
+                  (self.jobid,self.jobidraw,self.start,self.end,self.gpus,self.diff,self.cluster,self.data,self.timelimitraw))
         if self.data != None and self.data.startswith('JS1:') and len(self.data)>10:
             try:
                 t = json.loads(gzip.decompress(base64.b64decode(self.data[4:])))
@@ -78,7 +81,9 @@ class JobStats:
 
     # Get basic info from sacct and set instance variables
     def __get_job_info(self):
-        cmd = ["sacct","-P","-X","-o","jobidraw,start,end,cluster,reqtres,admincomment","-j",self.jobid]
+        # jobname must be last field next line to handle "|" chars later on
+        cmd = ["sacct","-P","-X","-o",
+               "jobidraw,start,end,cluster,reqtres,admincomment,user,account,state,nnodes,ncpus,reqmem,qos,partition,timelimitraw,jobname","-j",self.jobid]
         if self.cluster:
             cmd += ["-M",self.cluster]
         self.start = None
@@ -91,9 +96,31 @@ class JobStats:
                 self.cluster = i.get('Cluster',None)
                 tres = i.get('ReqTRES',None)
                 self.data = i.get('AdminComment',None)
+                self.user = i.get('User',None)
+                self.account = i.get('Account',None)
+                self.state = i.get('State',None)
+                self.timelimitraw = i.get('TimelimitRaw',None)
+                self.nnodes = i.get('NNodes',None)
+                self.ncpus = i.get('NCPUS',None)
+                self.reqmem = i.get('ReqMem',None)
+                self.qos = i.get('QOS',None)
+                self.partition = i.get('Partition',None)
+                self.jobname = i.get('JobName',None)  # if "|" in jobname then will be truncated
         except Exception as e:
             self.error("Failed to lookup jobid %s" % jobid)
-        self.gpus = tres != None and 'gres/gpu=' in tres and 'gres/gpu=0,' not in tres
+        self.gpus = 0
+        if tres != None and 'gres/gpu=' in tres and 'gres/gpu=0,' not in tres:
+            for part in tres.split(","):
+                if "gres/gpu=" in part:
+                    self.gpus = int(part.split("=")[-1])
+       
+        if self.timelimitraw.isnumeric():
+            self.timelimitraw = int(self.timelimitraw)
+        if "CANCEL" in self.state:
+          self.state = "CANCELLED"
+        if len(self.jobname) > 32:
+            self.jobname = self.jobname[:32] + "..."
+
         # currently running jobs will have Unknown as time
         if self.end == 'Unknown':
             self.end = time.time()
@@ -107,7 +134,6 @@ class JobStats:
             return True
         else:
             return False
-
 
     # extract info out of what was returned
     # sp = hash indexed by node
@@ -185,31 +211,173 @@ class JobStats:
             self.get_data('gpu_used_memory', "max_over_time((nvidia_gpu_memory_used_bytes{cluster='%s'} and nvidia_gpu_jobId == %s)[%ds:])")
             self.get_data('gpu_utilization', "avg_over_time((nvidia_gpu_duty_cycle{cluster='%s'} and nvidia_gpu_jobId == %s)[%ds:])")
 
-    def report_job(self):
-        def human_bytes(size, decimal_places=1):
-            size=float(size)
-            for unit in ['B','KB','MB','GB','TB']:
-                if size < 1024.0:
-                    break
-                size /= 1024.0
-            return f"{size:.{decimal_places}f}{unit}"
-        def human_seconds(seconds):
-            hour = seconds // 3600
-            if hour >= 24:
-                days = "%d-" % (hour // 24)
-                hour %= 24
-                hour = days + ("%02d:" % hour)
-            else:
-                if hour > 0:
-                    hour = "%02d:" % hour
-                else:
-                    hour = ''
-            seconds = seconds % (24 * 3600)
-            seconds %= 3600
-            minutes = seconds // 60
-            seconds %= 60
-            return "%s%02d:%02d" % (hour, minutes, seconds)
+    def human_bytes(self, size, decimal_places=1):
+        size=float(size)
+        for unit in ['B','KB','MB','GB','TB']:
+            if size < 1024.0:
+                break
+            size /= 1024.0
+        return f"{size:.{decimal_places}f}{unit}"
 
+    def human_seconds(self, seconds):
+        hour = seconds // 3600
+        if hour >= 24:
+            days = "%d-" % (hour // 24)
+            hour %= 24
+            hour = days + ("%02d:" % hour)
+        else:
+            if hour > 0:
+                hour = "%02d:" % hour
+            else:
+                hour = ''
+        seconds = seconds % (24 * 3600)
+        seconds %= 3600
+        minutes = seconds // 60
+        seconds %= 60
+        return "%s%02d:%02d" % (hour, minutes, seconds)
+
+    def human_datetime(self, x):
+       from datetime import datetime
+       return datetime.fromtimestamp(x).strftime("%a %b %-d, %Y at %I:%M %p")
+
+    def simple_output(self):
+        gutter = "  "
+        # cpu time utilization
+        print(f"{gutter}CPU utilization per node (CPU time used/runtime)") 
+        for node, used, alloc, cores in self.cpu_util__node_used_alloc_cores:
+            print(f"{gutter}    {node}: {self.human_seconds(used)}/{self.human_seconds(alloc)} (efficiency={100 * used / alloc:.1f}%)")
+        used, alloc, _ = self.cpu_util_total__used_alloc_cores
+        if self.nnodes != "1":
+            print(f"{gutter}Total used/runtime: {self.human_seconds(used)}/{self.human_seconds(alloc)}, efficiency={100 * used / alloc:.1f}%")
+        # cpu memory usage
+        print(f"\n{gutter}CPU memory usage per node - used/allocated")
+        for node, used, alloc, cores in self.cpu_mem__node_used_alloc_cores:
+            print(f"{gutter}    {node}: {self.human_bytes(used)}/{self.human_bytes(alloc)} ", end="")
+            print(f"({self.human_bytes(used*1.0/cores)}/{self.human_bytes(alloc*1.0/cores)} per core of {cores})")
+        total_used, total, total_cores = self.cpu_mem_total__used_alloc_cores
+        if self.nnodes != "1":
+            print(f"{gutter}Total used/allocated: {self.human_bytes(total_used)}/{self.human_bytes(total)}", end="")
+            print(f"({self.human_bytes(total_used*1.0/total_cores)}/{self.human_bytes(total*1.0/total_cores)} per core of {total_cores})")
+        if self.gpus:
+            # gpu utilization
+            print(f"\n{gutter}GPU utilization per node")
+            for node, util, gpu_index in self.gpu_util__node_util_index:
+                print(f"{gutter}    {node} (GPU {gpu_index}): {util}%")
+            # gpu memory usage
+            print(f"\n{gutter}GPU memory usage per node - maximum used/total")
+            for node, used, total, gpu_index in self.gpu_mem__node_used_total_index:
+                print(f"{gutter}   {node} (GPU {gpu_index}): {self.human_bytes(used)}/{self.human_bytes(total)} ({100.0*used/total:.1f}%)")
+
+    def job_notes(self):
+        s = ""
+        if (self.cpu_efficiency < 70) and (not self.gpus):
+            s +=f"  * The overall CPU utilization of job {self.jobid} is {self.cpu_efficiency:.1f}%. This value is low.\n"
+            s += "    Please investigate the reason for the low efficiency.\n" 
+        if self.gpus and (self.gpu_utilization < 30):
+            s +=f"  * The overall GPU utilization of job {self.jobid} is {self.gpu_utilization:.1f}%. This value is low.\n"
+            s += "    Please investigate the reason for the low efficiency.\n" 
+        if (self.nnodes == "1") and (self.cluster == "tiger") and (not self.gpus):
+            s += "  * Serial jobs on the Tiger cluster have the lowest priority of all jobs.\n"
+            s += "    Consider using a different cluster such as Della.\n"
+        if (self.nnodes == "1") and (self.cluster == "stellar") and (not self.gpus) and (int(self.cores) < 48):
+            s += "  * Serial jobs on the Stellar cluster have the lowest priority of all jobs.\n"
+            s += "    Consider using a different cluster such as Della.\n"
+        if (self.state == "OUT_OF_MEMORY"):
+            s +=f"  * Job {self.jobid} exceeded the amount of allocated CPU memory. For solutions see this page:\n"
+            s += "    https://researchcomputing.princeton.edu/support/knowledge-base/memory\n"
+        if (self.cluster == "stellar"):
+            s += "  * For the time history of various job metrics (VPN required from off-campus):\n"
+            s += "    https://mystellar.princeton.edu/pun/sys/jobstats\n"
+        return s
+
+    def enhanced_output(self):
+        term = Terminal()
+        print("")
+        print(80 * "=")
+        print("                            Slurm Job Statistics")
+        print(80 * "=")
+        print(f"           Job ID: {term.bold}{self.jobid}{term.normal}")
+        print(f"         Job Name: {self.jobname}")
+        print(f"    NetID/Account: {self.user}/{self.account}")
+        print(f"          Cluster: {self.cluster}")
+        if self.state == "OUT_OF_MEMORY":
+            print(f"            State: {term.bold}{self.state}{term.normal}")
+        else:
+            print(f"            State: {self.state}")
+        print(f"            Nodes: {self.nnodes}")
+        print(f"        CPU Cores: {self.ncpus}")
+        print(f"       CPU Memory: {self.reqmem}")
+        if self.gpus:
+            print(f"             GPUs: {self.gpus}")
+        print(f"    QOS/Partition: {self.qos}/{self.partition}")
+        in_progress = ""
+        if self.state == "RUNNING": in_progress = " (in progress)"
+        print(f"       Start Time: {self.human_datetime(self.start)}")
+        print(f"  Wall-Clock Time: {self.human_seconds(self.diff)}{in_progress}") 
+        print(f"       Time Limit: {self.human_seconds(60 * self.timelimitraw)}")
+        print("")
+        print(f"                            {term.bold}Overall Utilization{term.normal}")
+        print(80 * "=")
+
+        def draw_meter(x):
+          bars = x // 2
+          if bars < 0:  bars = 0
+          if bars > 50: bars = 50
+          text = f"{x}%"
+          spaces = 50 - bars - len(text)
+          if bars + len(text) > 50:
+              bars = 50 - len(text)
+              spaces = 0
+          if (x == 0):
+              clr = term.black
+          elif (x < 25):
+              clr = term.blue
+          elif (x < 50):
+              clr = term.cyan
+          elif (x < 75):
+              clr = term.magenta
+          else:
+              clr = term.red
+          return f"{term.bold}[{term.normal}" + f"{clr}" + bars * "|" + spaces * " " + \
+                 text + f"{term.normal}{term.bold}]{term.normal}"
+
+        # overall cpu time utilization
+        total_used, total, total_cores = self.cpu_util_total__used_alloc_cores
+        self.cpu_efficiency = round(100 * total_used / total)
+        print("  CPU utilization  " + draw_meter(self.cpu_efficiency))
+        # overall cpu memory utilization
+        total_used, total, total_cores = self.cpu_mem_total__used_alloc_cores
+        cpu_memory_efficiency = round(100 * total_used / total)
+        print("  CPU memory usage " + draw_meter(cpu_memory_efficiency))
+        if self.gpus:
+            # overall gpu utilization
+            overall, overall_gpu_count = self.gpu_util_total__util_gpus
+            self.gpu_utilization = overall / overall_gpu_count
+            print("  GPU utilization  " + draw_meter(round(self.gpu_utilization)))
+            # overall gpu memory usage
+            overall, overall_total = self.gpu_mem_total__used_alloc
+            gpu_memory_usage = round(100 * overall / overall_total)
+            print("  GPU memory usage " + draw_meter(gpu_memory_usage))
+        SECONDS_PER_MINUTE = 60
+        time_efficiency = round(100 * self.diff / (SECONDS_PER_MINUTE * self.timelimitraw))
+        if time_efficiency > 100: time_efficiency = 100
+        #print("  Job time efficiency " + draw_meter(time_efficiency))
+ 
+        print()
+        print(f"                            {term.bold}Detailed Utilization{term.normal}")
+        print(80 * "=")
+        self.simple_output()
+        print()
+        #import pdb; pdb.set_trace()
+        notes = self.job_notes()
+        if notes:
+            print(f"                                   {term.bold}Notes{term.normal}")
+            print(80 * "=")
+            print(notes)
+            print()
+
+
+    def report_job(self):
         sp_node = self.sp_node
 
         if len(sp_node)==0:
@@ -218,10 +386,26 @@ class JobStats:
             else:
                 self.error("I found no stats for job %s, either because it is too old or because it expired from jobstats database." % self.jobid)
 
+        # cpu utilization
         total = 0
         total_used = 0
         total_cores = 0
-        print("Memory usage per node - used/allocated")
+        self.cpu_util__node_used_alloc_cores = []
+        for n in sp_node:
+            used = sp_node[n]['total_time']
+            cores = sp_node[n]['cpus']
+            alloc = self.diff * cores
+            total += alloc
+            total_used += used
+            total_cores += cores
+            self.cpu_util__node_used_alloc_cores.append((n, used, alloc, cores))
+        self.cpu_util_total__used_alloc_cores = (total_used, total, total_cores)
+
+        # cpu memory
+        total = 0
+        total_used = 0
+        total_cores = 0
+        self.cpu_mem__node_used_alloc_cores = []
         for n in sp_node:
             used = sp_node[n]['used_memory']
             alloc = sp_node[n]['total_memory']
@@ -229,23 +413,29 @@ class JobStats:
             total += alloc
             total_used += used
             total_cores += cores
-            print("    %s: %s/%s (%s/%s per core of %d)" %(n, human_bytes(used), human_bytes(alloc), human_bytes(used*1.0/cores), human_bytes(alloc*1.0/cores), cores))
-        print("Total used/allocated: %s/%s (%s/%s per core of %d)" %(human_bytes(total_used), human_bytes(total), human_bytes(total_used*1.0/total_cores), human_bytes(total*1.0/total_cores), total_cores))
-        print()
-        total = 0
-        total_used = 0
-        print("CPU Usage per node (cpu time used/runtime)")
-        for n in sp_node:
-            used = sp_node[n]['total_time']
-            alloc = self.diff*sp_node[n]['cpus']
-            total += alloc
-            total_used += used
-            print("    %s: %s/%s (efficiency=%.1f%%)" %(n, human_seconds(used), human_seconds(alloc), 100.0*used/alloc))
-        print("Total used/runtime: %s/%s, efficiency=%.1f%%" %(human_seconds(total_used),human_seconds(total),100.0*total_used/total))
+            self.cpu_mem__node_used_alloc_cores.append((n, used, alloc, cores))
+        self.cpu_mem_total__used_alloc_cores = (total_used, total, total_cores)
 
         if self.gpus:
-            print()
-            print("GPU Memory utilization, per node(GPU) - maximum used/total")
+            # gpu utilization
+            overall = 0
+            overall_gpu_count = 0
+            self.gpu_util__node_util_index = []
+            for n in sp_node:
+                d = sp_node[n]
+                gpus = list(d['gpu_utilization'].keys())
+                gpus.sort()
+                for g in gpus:
+                    util = d['gpu_utilization'][g]
+                    overall += util
+                    overall_gpu_count += 1
+                    self.gpu_util__node_util_index.append((n, util, g))
+            self.gpu_util_total__util_gpus = (overall, overall_gpu_count)
+
+            # gpu memory usage
+            overall = 0
+            overall_total = 0
+            self.gpu_mem__node_used_total_index = []
             for n in sp_node:
                 d = sp_node[n]
                 gpus = list(d['gpu_total_memory'].keys())
@@ -253,17 +443,15 @@ class JobStats:
                 for g in gpus:
                     used = d['gpu_used_memory'][g]
                     total = d['gpu_total_memory'][g]
-                    print("    %s(GPU#%s): %s/%s (%.1f%%)" %(n, g, human_bytes(used), human_bytes(total),100.0*used/total))
-            print()
-            print("GPU Utilization, per node(GPU) - average in percents")
-            for n in sp_node:
-                d = sp_node[n]
-                gpus = list(d['gpu_utilization'].keys())
-                gpus.sort()
-                for g in gpus:
-                    util = d['gpu_utilization'][g]
-                    print("    %s(GPU#%s): %.1f/100" %(n, g, util))
+                    overall += used
+                    overall_total += total
+                    self.gpu_mem__node_used_total_index.append((n, used, total, g))
+            self.gpu_mem_total__used_alloc = (overall, overall_total)
 
+        #self.simple_output()
+        self.enhanced_output()
+
+ 
     def __str__(self, compact=False):
         js_data = { 'nodes': self.sp_node, 'total_time': self.diff, 'gpus': self.gpus }
         if compact:
@@ -291,7 +479,7 @@ if __name__ == "__main__":
     parser.add_argument("-d", "--debug", action='store_true', default=False,
                     help="Output debugging information.")
     args = parser.parse_args()
-
+    #import pdb; pdb.set_trace()
     for jobid in args.job:
         stats = JobStats(jobid=jobid, cluster=args.cluster, debug=args.debug)
         if args.json or args.base64:
