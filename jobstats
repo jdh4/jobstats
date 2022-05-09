@@ -82,30 +82,31 @@ class JobStats:
     # Get basic info from sacct and set instance variables
     def __get_job_info(self):
         # jobname must be last field next line to handle "|" chars later on
-        cmd = ["sacct","-P","-X","-o",
-               "jobidraw,start,end,cluster,reqtres,admincomment,user,account,state,nnodes,ncpus,reqmem,qos,partition,timelimitraw,jobname","-j",self.jobid]
+        cmd = ["sacct", "-P", "-X", "-o",
+               "jobidraw,start,end,cluster,reqtres,admincomment,user,account,state,nnodes,ncpus,reqmem,qos,partition,timelimitraw,jobname",
+               "-j", self.jobid]
         if self.cluster:
             cmd += ["-M",self.cluster]
         self.start = None
         self.end = None
         try:
             for i in csv.DictReader(subprocess.check_output(cmd,stderr=DEVNULL).decode("utf-8").split('\n'), delimiter='|'):
-                self.jobidraw = i.get('JobIDRaw',None)
-                self.start = i.get('Start',None)
-                self.end = i.get('End',None)
-                self.cluster = i.get('Cluster',None)
-                tres = i.get('ReqTRES',None)
-                self.data = i.get('AdminComment',None)
-                self.user = i.get('User',None)
-                self.account = i.get('Account',None)
-                self.state = i.get('State',None)
+                self.jobidraw     = i.get('JobIDRaw',None)
+                self.start        = i.get('Start',None)
+                self.end          = i.get('End',None)
+                self.cluster      = i.get('Cluster',None)
+                tres              = i.get('ReqTRES',None)
+                self.data         = i.get('AdminComment',None)
+                self.user         = i.get('User',None)
+                self.account      = i.get('Account',None)
+                self.state        = i.get('State',None)
                 self.timelimitraw = i.get('TimelimitRaw',None)
-                self.nnodes = i.get('NNodes',None)
-                self.ncpus = i.get('NCPUS',None)
-                self.reqmem = i.get('ReqMem',None)
-                self.qos = i.get('QOS',None)
-                self.partition = i.get('Partition',None)
-                self.jobname = i.get('JobName',None)  # if "|" in jobname then will be truncated
+                self.nnodes       = i.get('NNodes',None)
+                self.ncpus        = i.get('NCPUS',None)
+                self.reqmem       = i.get('ReqMem',None)
+                self.qos          = i.get('QOS',None)
+                self.partition    = i.get('Partition',None)
+                self.jobname      = i.get('JobName',None)  # if "|" in jobname then will be truncated
         except Exception as e:
             self.error("Failed to lookup jobid %s" % jobid)
         self.gpus = 0
@@ -113,7 +114,7 @@ class JobStats:
             for part in tres.split(","):
                 if "gres/gpu=" in part:
                     self.gpus = int(part.split("=")[-1])
-       
+ 
         if self.timelimitraw.isnumeric():
             self.timelimitraw = int(self.timelimitraw)
         if "CANCEL" in self.state:
@@ -238,14 +239,17 @@ class JobStats:
 
     def human_datetime(self, x):
        from datetime import datetime
-       return datetime.fromtimestamp(x).strftime("%a %b %-d, %Y at %I:%M %p")
+       return datetime.fromtimestamp(x).strftime("%a %b %-d, %Y at %-I:%M %p")
 
     def simple_output(self):
+        term = Terminal()
         gutter = "  "
         # cpu time utilization
-        print(f"{gutter}CPU utilization per node (CPU time used/runtime)") 
+        print(f"{gutter}CPU utilization per node (CPU time used/run time)") 
         for node, used, alloc, cores in self.cpu_util__node_used_alloc_cores:
-            print(f"{gutter}    {node}: {self.human_seconds(used)}/{self.human_seconds(alloc)} (efficiency={100 * used / alloc:.1f}%)")
+            msg = ""
+            if used == 0: msg = f" {term.bold}{term.red}<--- CPU node was not used!{term.normal}"
+            print(f"{gutter}    {node}: {self.human_seconds(used)}/{self.human_seconds(alloc)} (efficiency={100 * used / alloc:.1f}%){msg}")
         used, alloc, _ = self.cpu_util_total__used_alloc_cores
         if self.nnodes != "1":
             print(f"{gutter}Total used/runtime: {self.human_seconds(used)}/{self.human_seconds(alloc)}, efficiency={100 * used / alloc:.1f}%")
@@ -262,64 +266,108 @@ class JobStats:
             # gpu utilization
             print(f"\n{gutter}GPU utilization per node")
             for node, util, gpu_index in self.gpu_util__node_util_index:
-                print(f"{gutter}    {node} (GPU {gpu_index}): {util}%")
+                msg = ""
+                if util == 0: msg = f" {term.bold}{term.red}<--- GPU was not used!{term.normal}"
+                print(f"{gutter}    {node} (GPU {gpu_index}): {util}%{msg}")
             # gpu memory usage
             print(f"\n{gutter}GPU memory usage per node - maximum used/total")
             for node, used, total, gpu_index in self.gpu_mem__node_used_total_index:
                 print(f"{gutter}   {node} (GPU {gpu_index}): {self.human_bytes(used)}/{self.human_bytes(total)} ({100.0*used/total:.1f}%)")
 
     def job_notes(self):
+        term = Terminal()
         s = ""
-        if (self.cpu_efficiency < 70) and (not self.gpus):
-            s +=f"  * The overall CPU utilization of job {self.jobid} is {self.cpu_efficiency:.1f}%. This value is low.\n"
-            s += "    Please investigate the reason for the low efficiency.\n" 
-        if self.gpus and (self.gpu_utilization < 30):
-            s +=f"  * The overall GPU utilization of job {self.jobid} is {self.gpu_utilization:.1f}%. This value is low.\n"
-            s += "    Please investigate the reason for the low efficiency.\n" 
-        if (self.nnodes == "1") and (self.cluster == "tiger") and (not self.gpus):
-            s += "  * Serial jobs on the Tiger cluster have the lowest priority of all jobs.\n"
-            s += "    Consider using a different cluster such as Della.\n"
-        if (self.nnodes == "1") and (self.cluster == "stellar") and (not self.gpus) and (int(self.cores) < 48):
-            s += "  * Serial jobs on the Stellar cluster have the lowest priority of all jobs.\n"
-            s += "    Consider using a different cluster such as Della.\n"
+
+        # red notes (severe)
+        if self.gpus and (self.diff > 300):
+            num_unused_gpus = sum([util == 0 for _, util, _ in self.gpu_util__node_util_index])
+            if num_unused_gpus:
+                s += f"  {term.bold}{term.red}* This job did not use {num_unused_gpus} of the {self.gpus} allocated GPUs (see above).{term.normal}\n\n"
+        if (int(self.nnodes) > 1) and (self.diff > 300):
+           # could also use for single node case
+           num_unused_nodes = sum([used == 0 for _, used, _, _ in self.cpu_util__node_used_alloc_cores])
+           if num_unused_nodes:
+                s += f"  {term.bold}{term.red}* This job did not use {num_unused_nodes} of the {self.nnodes} allocated CPU nodes (see above).{term.normal}\n\n"
         if (self.state == "OUT_OF_MEMORY"):
-            s +=f"  * Job {self.jobid} exceeded the amount of allocated CPU memory. For solutions see this page:\n"
-            s += "    https://researchcomputing.princeton.edu/support/knowledge-base/memory\n"
+            s +=f"  {term.bold}{term.red}* This job failed because it exceeded the amount of allocated CPU memory. For\n"
+            s +=f"    solutions see this page:\n"
+            s +=f"    https://researchcomputing.princeton.edu/support/knowledge-base/memory{term.normal}\n\n"
+        if (self.state == "TIMEOUT"):
+            s +=f"  {term.bold}{term.red}* This job failed because it exceeded the time limit. For solutions see\n"
+            s +=f"    the --time directive on this page:\n"
+            s +=f"    https://researchcomputing.princeton.edu/support/knowledge-base/slurm{term.normal}\n\n"
+        if (self.nnodes == "1") and (self.cluster == "tiger") and (not self.gpus):
+            s +=f"  {term.bold}{term.red}* The TigerCPU cluster is intended for multinode jobs. Serial jobs are\n"
+            s +=f"    assigned the lowest priority. On TigerCPU, a serial job is one that\n"
+            s +=f"    runs on one node (independent of the number of cores). Consider carrying\n"
+            s +=f"    out this work elsewhere. This note does not apply to GPU jobs.{term.normal}\n\n"
+        if (self.nnodes == "1") and (self.cluster == "stellar") and (not self.gpus) and (int(self.ncpus) < 48):
+            s +=f"  {term.bold}{term.red}* The Stellar cluster is intended for multinode jobs. Serial jobs are\n"
+            s +=f"    assigned the lowest priority. On Stellar, a serial job is one that\n"
+            s +=f"    uses less than 48 CPU-cores. Consider performing this work elsewhere.{term.normal}\n\n"
+
+        # black notes
+        if (self.cpu_efficiency < 70) and (not self.gpus):
+            s +=f"  * The overall CPU utilization of this job is {self.cpu_efficiency:.1f}%. This value is low. Please\n"
+            if int(self.ncpus) > 1:
+                s += "    investigate the reason for the low efficiency. Consider performing a scaling\n"
+                s += "    analysis:\n" 
+                s += "    https://researchcomputing.princeton.edu/support/knowledge-base/scaling-analysis\n\n"
+            else:
+                s += "    investigate the reason for the low efficiency.\n"
+        if self.gpus and (self.gpu_utilization < 20):
+            s +=f"  * The overall GPU utilization of this job is {self.gpu_utilization:.1f}%. This value is low.\n"
+            s += "    Please investigate the reason for the low efficiency. For more info:\n"
+            s += "    https://researchcomputing.princeton.edu/support/knowledge-base/gpu-computing\n\n"
+
+        # default
+        if (self.cluster == "tiger"):
+            s += "  * For additional job metrics including metrics plotted against time:\n"
+            s += "    https://stats.rc.princeton.edu (VPN required if off-campus)\n\n"
         if (self.cluster == "stellar"):
-            s += "  * For the time history of various job metrics (VPN required from off-campus):\n"
-            s += "    https://mystellar.princeton.edu/pun/sys/jobstats\n"
+            s += "  * For additional job metrics including metrics plotted against time:\n"
+            s += "    https://mystellar.princeton.edu/pun/sys/jobstats (VPN required if off-campus)\n\n"
+        if (self.cluster == "della"):
+            s += "  * For additional job metrics including metrics plotted against time:\n"
+            s += "    https://mydella.princeton.edu/pun/sys/jobstats (VPN required if off-campus)\n\n"
+        if (self.cluster == "adroit"):
+            s += "  * For additional job metrics including metrics plotted against time:\n"
+            s += "    https://myadroit.princeton.edu/pun/sys/jobstats (VPN required if off-campus)\n\n"
         return s
 
     def enhanced_output(self):
         term = Terminal()
         print("")
         print(80 * "=")
-        print("                            Slurm Job Statistics")
+        print("                              Slurm Job Statistics")
         print(80 * "=")
-        print(f"           Job ID: {term.bold}{self.jobid}{term.normal}")
-        print(f"         Job Name: {self.jobname}")
-        print(f"    NetID/Account: {self.user}/{self.account}")
-        print(f"          Cluster: {self.cluster}")
-        if self.state == "OUT_OF_MEMORY":
-            print(f"            State: {term.bold}{self.state}{term.normal}")
+        print(f"         Job ID: {term.bold}{self.jobid}{term.normal}")
+        print(f"  NetID/Account: {self.user}/{self.account}")
+        print(f"       Job Name: {self.jobname}")
+        if self.state in ("OUT_OF_MEMORY", "TIMEOUT"):
+            print(f"          State: {term.bold}{term.red}{self.state}{term.normal}")
         else:
-            print(f"            State: {self.state}")
-        print(f"            Nodes: {self.nnodes}")
-        print(f"        CPU Cores: {self.ncpus}")
-        print(f"       CPU Memory: {self.reqmem}")
+            print(f"          State: {self.state}")
+        print(f"          Nodes: {self.nnodes}")
+        print(f"      CPU Cores: {self.ncpus}")
+        print(f"     CPU Memory: {self.reqmem}")
         if self.gpus:
-            print(f"             GPUs: {self.gpus}")
-        print(f"    QOS/Partition: {self.qos}/{self.partition}")
+            print(f"           GPUs: {self.gpus}")
+        if self.cluster in ("stellar", "tiger") and (self.partition == "serial"):
+            print(f"  QOS/Partition: {self.qos}/{term.bold}{term.red}{self.partition}{term.normal}")
+        else:
+            print(f"  QOS/Partition: {self.qos}/{self.partition}")
+        print(f"        Cluster: {self.cluster}")
         in_progress = ""
         if self.state == "RUNNING": in_progress = " (in progress)"
-        print(f"       Start Time: {self.human_datetime(self.start)}")
-        print(f"  Wall-Clock Time: {self.human_seconds(self.diff)}{in_progress}") 
-        print(f"       Time Limit: {self.human_seconds(60 * self.timelimitraw)}")
+        print(f"     Start Time: {self.human_datetime(self.start)}")
+        print(f"       Run Time: {self.human_seconds(self.diff)}{in_progress}") 
+        print(f"     Time Limit: {self.human_seconds(60 * self.timelimitraw)}")
         print("")
-        print(f"                            {term.bold}Overall Utilization{term.normal}")
+        print(f"                              {term.bold}Overall Utilization{term.normal}")
         print(80 * "=")
 
-        def draw_meter(x):
+        def draw_meter(x, hardware, util=False):
           bars = x // 2
           if bars < 0:  bars = 0
           if bars > 50: bars = 50
@@ -328,53 +376,56 @@ class JobStats:
           if bars + len(text) > 50:
               bars = 50 - len(text)
               spaces = 0
-          if (x == 0):
-              clr = term.black
-          elif (x < 25):
-              clr = term.blue
-          elif (x < 50):
-              clr = term.cyan
-          elif (x < 75):
-              clr = term.magenta
-          else:
+
+          clr = term.black
+          if (x < 70 and hardware == "cpu" and util and (not self.gpus)) or (x < 20 and hardware == "gpu" and util):
               clr = term.red
+          #if (x == 0):
+          #    clr = term.black
+          #elif (x < 25):
+          #    clr = term.blue
+          #elif (x < 50):
+          #    clr = term.cyan
+          #elif (x < 75):
+          #    clr = term.magenta
+          #else:
+          #    clr = term.red
           return f"{term.bold}[{term.normal}" + f"{clr}" + bars * "|" + spaces * " " + \
                  text + f"{term.normal}{term.bold}]{term.normal}"
 
         # overall cpu time utilization
         total_used, total, total_cores = self.cpu_util_total__used_alloc_cores
         self.cpu_efficiency = round(100 * total_used / total)
-        print("  CPU utilization  " + draw_meter(self.cpu_efficiency))
+        print("  CPU utilization  " + draw_meter(self.cpu_efficiency, "cpu", util=True))
         # overall cpu memory utilization
         total_used, total, total_cores = self.cpu_mem_total__used_alloc_cores
         cpu_memory_efficiency = round(100 * total_used / total)
-        print("  CPU memory usage " + draw_meter(cpu_memory_efficiency))
+        print("  CPU memory usage " + draw_meter(cpu_memory_efficiency, "cpu"))
         if self.gpus:
             # overall gpu utilization
             overall, overall_gpu_count = self.gpu_util_total__util_gpus
             self.gpu_utilization = overall / overall_gpu_count
-            print("  GPU utilization  " + draw_meter(round(self.gpu_utilization)))
+            print("  GPU utilization  " + draw_meter(round(self.gpu_utilization), "gpu", util=True))
             # overall gpu memory usage
             overall, overall_total = self.gpu_mem_total__used_alloc
             gpu_memory_usage = round(100 * overall / overall_total)
-            print("  GPU memory usage " + draw_meter(gpu_memory_usage))
-        SECONDS_PER_MINUTE = 60
-        time_efficiency = round(100 * self.diff / (SECONDS_PER_MINUTE * self.timelimitraw))
-        if time_efficiency > 100: time_efficiency = 100
+            print("  GPU memory usage " + draw_meter(gpu_memory_usage, "gpu"))
+        #SECONDS_PER_MINUTE = 60
+        #time_efficiency = round(100 * self.diff / (SECONDS_PER_MINUTE * self.timelimitraw))
+        #if time_efficiency > 100: time_efficiency = 100
         #print("  Job time efficiency " + draw_meter(time_efficiency))
  
         print()
-        print(f"                            {term.bold}Detailed Utilization{term.normal}")
+        print(f"                              {term.bold}Detailed Utilization{term.normal}")
         print(80 * "=")
         self.simple_output()
         print()
         #import pdb; pdb.set_trace()
         notes = self.job_notes()
         if notes:
-            print(f"                                   {term.bold}Notes{term.normal}")
+            print(f"                                     {term.bold}Notes{term.normal}")
             print(80 * "=")
             print(notes)
-            print()
 
 
     def report_job(self):
@@ -448,8 +499,7 @@ class JobStats:
                     self.gpu_mem__node_used_total_index.append((n, used, total, g))
             self.gpu_mem_total__used_alloc = (overall, overall_total)
 
-        #self.simple_output()
-        self.enhanced_output()
+        self.simple_output() if args.simple else self.enhanced_output()
 
  
     def __str__(self, compact=False):
@@ -478,9 +528,11 @@ if __name__ == "__main__":
                     help="Produce row data in json format, with no summary and also gzip and encode it in base64 output for db storage.")
     parser.add_argument("-d", "--debug", action='store_true', default=False,
                     help="Output debugging information.")
+    parser.add_argument("-s", "--simple", action='store_true', default=False,
+                    help="Output information using a simple format.")
     args = parser.parse_args()
-    #import pdb; pdb.set_trace()
     for jobid in args.job:
+        #import pdb; pdb.set_trace()
         stats = JobStats(jobid=jobid, cluster=args.cluster, debug=args.debug)
         if args.json or args.base64:
             print(stats.report_job_json(args.base64))
