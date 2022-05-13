@@ -230,7 +230,7 @@ class JobStats:
             if hour > 0:
                 hour = "%02d:" % hour
             else:
-                hour = ''
+                hour = '00:'
         seconds = seconds % (24 * 3600)
         seconds %= 3600
         minutes = seconds // 60
@@ -282,19 +282,26 @@ class JobStats:
         if self.gpus and (self.diff > 300):
             num_unused_gpus = sum([util == 0 for _, util, _ in self.gpu_util__node_util_index])
             if num_unused_gpus:
-                s += f"  {term.bold}{term.red}* This job did not use {num_unused_gpus} of the {self.gpus} allocated GPUs (see above).{term.normal}\n\n"
+                if self.gpus == 1:
+                    s += f"  {term.bold}{term.red}* This job did not use the GPU (see above).{term.normal}\n\n"
+                else:
+                    s += f"  {term.bold}{term.red}* This job did not use {num_unused_gpus} of the {self.gpus} allocated GPUs (see above).{term.normal}\n\n"
         if (int(self.nnodes) > 1) and (self.diff > 300):
-           # could also use for single node case
-           num_unused_nodes = sum([used == 0 for _, used, _, _ in self.cpu_util__node_used_alloc_cores])
-           if num_unused_nodes:
+            # could also use for single node case
+            num_unused_nodes = sum([used == 0 for _, used, _, _ in self.cpu_util__node_used_alloc_cores])
+            if num_unused_nodes:
                 s += f"  {term.bold}{term.red}* This job did not use {num_unused_nodes} of the {self.nnodes} allocated CPU nodes (see above).{term.normal}\n\n"
+        if self.gpus and (self.gpu_utilization < 15):
+            s +=f"  {term.bold}{term.red}* The overall GPU utilization of this job is {round(self.gpu_utilization)}%. This value is low. Please\n"
+            s += "    investigate the reason for the low efficiency. For more info:\n"
+            s +=f"    https://researchcomputing.princeton.edu/support/knowledge-base/gpu-computing{term.normal}\n\n"
         if (self.state == "OUT_OF_MEMORY"):
             s +=f"  {term.bold}{term.red}* This job failed because it exceeded the amount of allocated CPU memory. For\n"
-            s +=f"    solutions see this page:\n"
+            s +=f"    solutions, see this page:\n"
             s +=f"    https://researchcomputing.princeton.edu/support/knowledge-base/memory{term.normal}\n\n"
         if (self.state == "TIMEOUT"):
-            s +=f"  {term.bold}{term.red}* This job failed because it exceeded the time limit. For solutions see\n"
-            s +=f"    the --time directive on this page:\n"
+            s +=f"  {term.bold}{term.red}* This job failed because it exceeded the time limit. The solution is to\n"
+            s +=f"    increase the value of the --time directive as explained on this page:\n"
             s +=f"    https://researchcomputing.princeton.edu/support/knowledge-base/slurm{term.normal}\n\n"
         if (self.nnodes == "1") and (self.cluster == "tiger") and (not self.gpus):
             s +=f"  {term.bold}{term.red}* The TigerCPU cluster is intended for multinode jobs. Serial jobs are\n"
@@ -304,26 +311,33 @@ class JobStats:
         if (self.nnodes == "1") and (self.cluster == "stellar") and (not self.gpus) and (int(self.ncpus) < 48):
             s +=f"  {term.bold}{term.red}* The Stellar cluster is intended for multinode jobs. Serial jobs are\n"
             s +=f"    assigned the lowest priority. On Stellar, a serial job is one that\n"
-            s +=f"    uses less than 48 CPU-cores. Consider performing this work elsewhere.{term.normal}\n\n"
+            s +=f"    uses less than 48 CPU-cores. Consider carrying out this work elsewhere.{term.normal}\n\n"
+        if self.time_eff_violation:
+            s +=f"  {term.bold}{term.red}* The time efficiency of this job is {self.time_efficiency}%. The time efficiency is the run time\n"
+            s += "    divided by the time limit. Please consider decreasing the value of the\n"
+            s += "    --time directive to increase the time efficiency. This will lower your\n"
+            s += "    queue time and allow the Slurm job scheduler to work more effectively for\n"
+            s += "    all users. For more info:\n"
+            s +=f"    https://researchcomputing.princeton.edu/support/knowledge-base/slurm{term.normal}\n\n"
 
         # black notes
         if (self.cpu_efficiency < 70) and (not self.gpus):
-            s +=f"  * The overall CPU utilization of this job is {self.cpu_efficiency:.1f}%. This value is low. Please\n"
+            s +=f"  * The overall CPU utilization of this job is {self.cpu_efficiency}%. This value is low. Please\n"
             if int(self.ncpus) > 1:
                 s += "    investigate the reason for the low efficiency. Consider performing a scaling\n"
                 s += "    analysis:\n" 
                 s += "    https://researchcomputing.princeton.edu/support/knowledge-base/scaling-analysis\n\n"
             else:
                 s += "    investigate the reason for the low efficiency.\n"
-        if self.gpus and (self.gpu_utilization < 20):
-            s +=f"  * The overall GPU utilization of this job is {self.gpu_utilization:.1f}%. This value is low.\n"
-            s += "    Please investigate the reason for the low efficiency. For more info:\n"
+        if self.gpus and (self.gpu_utilization < 25) and (self.gpu_utilization >= 15):
+            s +=f"  * The overall GPU utilization of this job is {self.gpu_utilization:.1f}%. This value is low compared\n"
+            s += "    to the cluster mean value of about 50%. For more info:\n"
             s += "    https://researchcomputing.princeton.edu/support/knowledge-base/gpu-computing\n\n"
 
         # default
-        if (self.cluster == "tiger"):
+        if (self.cluster == "tiger" or self.cluster == "traverse"):
             s += "  * For additional job metrics including metrics plotted against time:\n"
-            s += "    https://stats.rc.princeton.edu (VPN required if off-campus)\n\n"
+            s += "    https://stats.rc.princeton.edu  (VPN required if off-campus)\n\n"
         if (self.cluster == "stellar"):
             s += "  * For additional job metrics including metrics plotted against time:\n"
             s += "    https://mystellar.princeton.edu/pun/sys/jobstats (VPN required if off-campus)\n\n"
@@ -334,6 +348,46 @@ class JobStats:
             s += "  * For additional job metrics including metrics plotted against time:\n"
             s += "    https://myadroit.princeton.edu/pun/sys/jobstats (VPN required if off-campus)\n\n"
         return s
+
+    def cpu_memory_formatted(self):
+        total = self.reqmem.replace("000M", "G").replace("000G", "T").replace(".50G", ".5G").replace(".50T", ".5T")
+        if int(self.ncpus) == 1 or all([X not in total for X in ("K", "M", "G", "T")]):
+            return f'     CPU Memory: {total.replace("M", "MB").replace("G", "GB").replace("T", "TB")}'
+        if total.endswith("K"):
+            bytes_ = float(total.replace("K", "")) * 1e3
+        elif total.endswith("M"):
+            bytes_ = float(total.replace("M", "")) * 1e6
+        elif total.endswith("G"):
+            bytes_ = float(total.replace("G", "")) * 1e9
+        elif total.endswith("T"):
+            bytes_ = float(total.replace("T", "")) * 1e12
+        else:
+            return total
+        bytes_per_core = bytes_ / int(self.ncpus)
+        for unit in ['B','KB','MB','GB','TB']:
+            if bytes_per_core < 1000:
+                break
+            bytes_per_core /= 1000
+        bpc = f"{bytes_per_core:.1f}"
+        bpc = bpc.replace(".0", "")
+        return f'     CPU Memory: {total.replace("M", "MB").replace("G", "GB").replace("T", "TB")} ({bpc}{unit} per CPU-core)'
+
+    def run_time_formatted(self):
+        self.time_eff_violation = False
+        if self.state == "RUNNING":
+            return f"       Run Time: {self.human_seconds(self.diff)} (in progress)"
+        elif self.state == "COMPLETED" and self.timelimitraw > 0:
+            SECONDS_PER_MINUTE = 60
+            self.time_efficiency = round(100 * self.diff / (SECONDS_PER_MINUTE * self.timelimitraw))
+            if self.time_efficiency > 100: self.time_efficiency = 100
+            clr = ""
+            term = Terminal()
+            if self.time_efficiency < 50 and self.diff > 300:
+                self.time_eff_violation = True
+                clr = f"{term.bold}{term.red}"
+            return f"       Run Time: {clr}{self.human_seconds(self.diff)}{term.normal}"
+        else:
+            return f"       Run Time: {self.human_seconds(self.diff)}"
 
     def enhanced_output(self):
         term = Terminal()
@@ -350,7 +404,7 @@ class JobStats:
             print(f"          State: {self.state}")
         print(f"          Nodes: {self.nnodes}")
         print(f"      CPU Cores: {self.ncpus}")
-        print(f"     CPU Memory: {self.reqmem}")
+        print(self.cpu_memory_formatted())
         if self.gpus:
             print(f"           GPUs: {self.gpus}")
         if self.cluster in ("stellar", "tiger") and (self.partition == "serial"):
@@ -358,10 +412,8 @@ class JobStats:
         else:
             print(f"  QOS/Partition: {self.qos}/{self.partition}")
         print(f"        Cluster: {self.cluster}")
-        in_progress = ""
-        if self.state == "RUNNING": in_progress = " (in progress)"
         print(f"     Start Time: {self.human_datetime(self.start)}")
-        print(f"       Run Time: {self.human_seconds(self.diff)}{in_progress}") 
+        print(self.run_time_formatted())
         print(f"     Time Limit: {self.human_seconds(60 * self.timelimitraw)}")
         print("")
         print(f"                              {term.bold}Overall Utilization{term.normal}")
@@ -377,20 +429,12 @@ class JobStats:
               bars = 50 - len(text)
               spaces = 0
 
-          clr = term.black
-          if (x < 70 and hardware == "cpu" and util and (not self.gpus)) or (x < 20 and hardware == "gpu" and util):
-              clr = term.red
-          #if (x == 0):
-          #    clr = term.black
-          #elif (x < 25):
-          #    clr = term.blue
-          #elif (x < 50):
-          #    clr = term.cyan
-          #elif (x < 75):
-          #    clr = term.magenta
-          #else:
-          #    clr = term.red
-          return f"{term.bold}[{term.normal}" + f"{clr}" + bars * "|" + spaces * " " + \
+          clr = clr2 = ""
+          # TDO 15 needs to be global
+          if (x < 70 and hardware == "cpu" and util and (not self.gpus)) or (x < 15 and hardware == "gpu" and util):
+              clr  = f"{term.red}"
+              clr2 = f"{term.bold}{term.red}"
+          return f"{term.bold}[{term.normal}" + clr + bars * "|" + spaces * " " + clr2 + \
                  text + f"{term.normal}{term.bold}]{term.normal}"
 
         # overall cpu time utilization
@@ -435,7 +479,9 @@ class JobStats:
             if self.diff < 30:
                 self.error("The job %s is too short (%s seconds) for meaningful detailed statistics, please use seff command." % (self.jobid, self.diff))
             else:
-                self.error("I found no stats for job %s, either because it is too old or because it expired from jobstats database." % self.jobid)
+                self.error(f"I found no stats for job {self.jobid}, either because it is too old or because\n"
+                          + "it expired from jobstats database. If you are not running this command on the\n"
+                          + "cluster where the job was run then use the -c option to specify the cluster.")
 
         # cpu utilization
         total = 0
