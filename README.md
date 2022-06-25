@@ -218,6 +218,60 @@ $ sacct -j 40345776_98 -o jobid%30,jobidraw%30
                  40345776_98.0                     40356661.0
 ```
 
+## Using the class externally
+
+```python
+stats = mymodule.JobStats("40376693", cluster="della")
+print(stats.report_job_json(False))
+```
+
+```
+$ python3 demo.py 
+{
+    "gpus": 4,
+    "nodes": {
+        "della-i14g11": {
+            "cpus": 24,
+            "gpu_total_memory": {
+                "0": 42949672960,
+                "1": 42949672960
+            },
+            "gpu_used_memory": {
+                "0": 35640573952,
+                "1": 35640573952
+            },
+            "gpu_utilization": {
+                "0": 72.6,
+                "1": 72.9
+            },
+            "total_memory": 68719476736,
+            "total_time": 1159766.2,
+            "used_memory": 17839022080
+        },
+        "della-i14g7": {
+            "cpus": 24,
+            "gpu_total_memory": {
+                "0": 42949672960,
+                "1": 42949672960
+            },
+            "gpu_used_memory": {
+                "0": 38834536448,
+                "1": 35640508416
+            },
+            "gpu_utilization": {
+                "0": 68.9,
+                "1": 70.4
+            },
+            "total_memory": 68719476736,
+            "total_time": 1165097.3,
+            "used_memory": 16258260992
+        }
+    },
+    "total_time": 518710
+}
+```
+
+
 ## busted
 
 ```
