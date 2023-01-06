@@ -11,6 +11,7 @@ import json
 import base64
 import gzip
 from blessed import Terminal
+import syslog
 
 # for convenience
 DEVNULL = open(os.devnull, 'w')
@@ -34,13 +35,17 @@ class JobStats:
 
     # initialize basic job stats, can be called either with those stats
     # provided and if not it will fetch them
-    def __init__(self, jobid=None, jobidraw=None, start=None, end=None, gpus=None, cluster=None, debug=False, color=("","","")):
+    def __init__(self, jobid=None, jobidraw=None, start=None, end=None, gpus=None, cluster=None, debug=False, debug_syslog=False, force_recalc=False, color=("","","")):
         self.cluster = cluster
         self.debug = debug
+        self.debug_syslog = debug_syslog
+        self.force_recalc = force_recalc
         self.sp_node = {}
         self.txt_bold   = color[0]
         self.txt_red    = color[1]
         self.txt_normal = color[2]
+        if self.debug_syslog:
+            syslog.openlog('jobstat[%s]' % jobid)
         if jobidraw == None:
             self.jobid = jobid
             if not self.__get_job_info():
@@ -58,15 +63,15 @@ class JobStats:
             self.end = end
             self.gpus = gpus
             self.data = None
+            self.timelimitraw = None
         self.diff = self.end - self.start
         # for tiger data is collected as tiger but slurm cluster name is tiger2
         if self.cluster == "tiger2":
             self.cluster = "tiger"
         if self.cluster == "mcmillan3":
             self.cluster = "mcmillan"
-        if self.debug:
-            print("DEBUG: jobid=%s, jobidraw=%s, start=%s, end=%s, gpus=%s, diff=%s, cluster=%s, data=%s, timelimitraw=%s" % 
-                  (self.jobid,self.jobidraw,self.start,self.end,self.gpus,self.diff,self.cluster,self.data,self.timelimitraw))
+        self.debug_print("jobid=%s, jobidraw=%s, start=%s, end=%s, gpus=%s, diff=%s, cluster=%s, data=%s, timelimitraw=%s" % 
+            (self.jobid,self.jobidraw,self.start,self.end,self.gpus,self.diff,self.cluster,self.data,self.timelimitraw))
         if self.data != None and self.data.startswith('JS1:') and len(self.data)>10:
             try:
                 t = json.loads(gzip.decompress(base64.b64decode(self.data[4:])))
@@ -74,8 +79,9 @@ class JobStats:
             except Exception as e:
                 print("ERROR: %s" %e)
         if not self.sp_node:
-            # call prometheus to get detailed statistics
-            self.get_job_stats()
+            # call prometheus to get detailed statistics, if long enough
+            if self.diff > 59:
+                self.get_job_stats()
 
     def nodes(self):
         return self.sp_node
@@ -93,9 +99,17 @@ class JobStats:
     def error(self, msg):
         if __name__ == "__main__":
             sys.stderr.write("%s\n" % msg)
+            if self.debug_syslog:
+                syslog.syslog(msg)
             sys.exit(1)
         else:
             raise Exception(msg)
+
+    def debug_print(self, msg):
+        if self.debug:
+            print('DEBUG: %s' % msg)
+        if self.debug_syslog:
+            syslog.syslog(msg)
 
     # Get basic info from sacct and set instance variables
     def __get_job_info(self):
@@ -115,7 +129,10 @@ class JobStats:
                 self.end          = i.get('End',None)
                 self.cluster      = i.get('Cluster',None)
                 self.tres         = i.get('ReqTRES',None)
-                self.data         = i.get('AdminComment',None)
+                if self.force_recalc:
+                    self.data     = None
+                else:
+                    self.data     = i.get('AdminComment',None)
                 self.user         = i.get('User',None)
                 self.account      = i.get('Account',None)
                 self.state        = i.get('State',None)
@@ -126,6 +143,7 @@ class JobStats:
                 self.qos          = i.get('QOS',None)
                 self.partition    = i.get('Partition',None)
                 self.jobname      = i.get('JobName',None)  # if "|" in jobname then will be truncated
+                self.debug_print('jobidraw=%s, start=%s, end=%s, cluster=%s, tres=%s, data=%s, user=%s, account=%s, state=%s, timelimit=%s, nodes=%s, ncpus=%s, reqmem=%s, qos=%s, partition=%s, jobname=%s' % (self.jobidraw, self.start, self.end, self.cluster, self.tres, self.data, self.user, self.account, self.state, self.timelimitraw, self.nnodes, self.ncpus, self.reqmem, self.qos, self.partition, self.jobname))
         except Exception as e:
             self.error("Failed to lookup jobid %s" % jobid)
  
@@ -210,14 +228,12 @@ class JobStats:
             return response.json()
         
         expanded_query = query%(self.cluster, self.jobidraw, self.diff)
-        if self.debug:
-            print("DEBUG: query=%s, time=%s" %(expanded_query,self.end))
+        self.debug_print("query=%s, time=%s" %(expanded_query,self.end))
         try:
             j = __run_query(expanded_query, time=self.end)
         except Exception as e:
             self.error("ERROR: Failed to query jobstats database, got error: %s:" % e)
-        if self.debug:
-            print("DEBUG: query result=%s" % j)
+        self.debug_print("query result=%s" % j)
         if j["status"] == 'success':
             self.get_data_out(j, where)
         elif j["status"] == 'error':
@@ -236,7 +252,7 @@ class JobStats:
     def get_job_stats(self):
         # query CPU and Memory utilization data
         self.get_data('total_memory', "max_over_time(cgroup_memory_total_bytes{cluster='%s',jobid='%s',step='',task=''}[%ds])")
-        self.get_data('used_memory', "max_over_time(cgroup_memory_used_bytes{cluster='%s',jobid='%s',step='',task=''}[%ds])")
+        self.get_data('used_memory', "max_over_time(cgroup_memory_rss_bytes{cluster='%s',jobid='%s',step='',task=''}[%ds])")
         self.get_data('total_time', "max_over_time(cgroup_cpu_total_seconds{cluster='%s',jobid='%s',step='',task=''}[%ds])")
         self.get_data('cpus', "max_over_time(cgroup_cpus{cluster='%s',jobid='%s',step='',task=''}[%ds])")
 
@@ -711,8 +727,12 @@ if __name__ == "__main__":
                     help="Produce row data in json format, with no summary and also gzip and encode it in base64 output for db storage.")
     parser.add_argument("-d", "--debug", action='store_true', default=False,
                     help="Output debugging information.")
+    parser.add_argument("-S", "--syslog", action='store_true', default=False,
+                    help="Output debugging information to syslog.")
     parser.add_argument("-s", "--simple", action='store_true', default=False,
                     help="Output information using a simple format.")
+    parser.add_argument("-f", "--force", action='store_true', default=False,
+                    help="Force recalculation without using cached data from the database.")
     parser.add_argument("-n", "--no-color", action='store_true', default=False,
                     help="Output information without colorization.")
     args = parser.parse_args()
@@ -726,7 +746,7 @@ if __name__ == "__main__":
     if args.cluster == "tiger": args.cluster = "tiger2"
     for jobid in args.job:
         #import pdb; pdb.set_trace()
-        stats = JobStats(jobid=jobid, cluster=args.cluster, debug=args.debug, color=color)
+        stats = JobStats(jobid=jobid, cluster=args.cluster, debug=args.debug, debug_syslog=args.syslog, force_recalc=args.force, color=color)
         if args.json or args.base64:
             print(stats.report_job_json(args.base64))
         else:
