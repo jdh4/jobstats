@@ -61,6 +61,22 @@ Now focus on format.
 
 Crashes when try to make a jobstats  object without jobid
 
+## How to call `jobstats` from a Python script?
+
+```python
+def get_stats_for_running_job(jobid, cluster):
+  import importlib.machinery
+  import importlib.util
+  cluster = cluster.replace("tiger", "tiger2")
+  loader = importlib.machinery.SourceFileLoader('jobstats', '/usr/local/bin/jobstats')
+  spec = importlib.util.spec_from_loader('jobstats', loader)
+  mymodule = importlib.util.module_from_spec(spec)
+  loader.exec_module(mymodule)
+  stats = mymodule.JobStats(jobid=jobid, cluster=cluster)
+  time.sleep(0.5)
+  return eval(stats.report_job_json(False))
+```
+
 ## demo
 
 ```
