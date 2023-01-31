@@ -202,12 +202,8 @@ $ jobstats 45274911 -j
     "nodes": {
         "della-l01g1": {
             "cpus": 1,
-            "gpu_total_memory": {
-                "0": 10200547328
-            },
-            "gpu_used_memory": {
-                "0": 6881280
-            },
+            "gpu_total_memory": {"0": 10200547328},
+            "gpu_used_memory": {"0": 6881280},
             "total_memory": 33554432000,
             "total_time": 0.1,
             "used_memory": 1855488
