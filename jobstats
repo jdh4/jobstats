@@ -712,6 +712,7 @@ class JobStats:
             overall = 0
             overall_gpu_count = 0
             self.gpu_util__node_util_index = []
+            key_found = True
             for n in sp_node:
                 d = sp_node[n]
                 if 'gpu_utilization' in d:
@@ -722,11 +723,15 @@ class JobStats:
                         overall += util
                         overall_gpu_count += 1
                         self.gpu_util__node_util_index.append((n, util, g))
-                    self.gpu_util_total__util_gpus = (overall, overall_gpu_count)
                 else:
                     # this branch deals with mig
+                    key_found = False
                     self.gpu_util__node_util_index.append((n, 50, "0"))
-                    self.gpu_util_total__util_gpus = (50, 1)
+            if key_found:
+                self.gpu_util_total__util_gpus = (overall, overall_gpu_count)
+            else:
+                # this branch deals with mig
+                self.gpu_util_total__util_gpus = (50, 1)
 
             # gpu memory usage
             overall = 0
