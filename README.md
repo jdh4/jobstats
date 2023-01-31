@@ -196,6 +196,29 @@ KeyError: 'used_memory'
 ```
 
 ```
+$ jobstats 45274911 -j 
+{
+    "gpus": 1,
+    "nodes": {
+        "della-l01g1": {
+            "cpus": 1,
+            "gpu_total_memory": {
+                "0": 10200547328
+            },
+            "gpu_used_memory": {
+                "0": 6881280
+            },
+            "total_memory": 33554432000,
+            "total_time": 0.1,
+            "used_memory": 1855488
+        }
+    },
+    "total_time": 168
+}
+```
+
+
+```
 $ jobstats 39861033
 Memory usage per node - used/allocated
     della-r2c1n16: 25.3GB/64.0GB (3.2GB/8.0GB per core of 8)
