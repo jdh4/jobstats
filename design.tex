@@ -1,0 +1,204 @@
+\section{Design of the Jobstats Platform}
+\label{jobstats_design}
+
+\subsection{Overview}
+The Jobstats platform is built on the Prometheus monitoring framework~\cite{prometheus} which provides a fast and efficient time-series database. Such a database is a requirement for large clusters where the number of collected data points can be exorbitant. Job and node statistics are exposed by four different Prometheus exporters or programs that collect local statistics on a node and make them available for the Prometheus server to collect. On the compute nodes, there are up to three exporters: a standard node exporter for monitoring generic statistics (e.g., CPU frequencies, NFS and local disk I/O statistics), CPU utilization and CPU memory usage data of individual jobs via a cgroup exporter and optionally GPU job statistics via a modified NVIDIA GPU exporter. An optional fourth exporter tracks Spectrum Scale/GPFS filesystem use, only one instance per cluster, usually on a central GPFS server and not on any of the compute nodes (as a single instance exposes data for all members of the GPFS cluster).
+
+\begin{figure}
+  \centering
+  \includegraphics[width=0.7\linewidth]{jobstats_schematics.pdf}
+  \caption{A schematic diagram of the components of the Jobstats platform and the external tools. A compute node with two sockets is shown in the upper left. The dotted line around the node indicates the three node-level exporters, namely, Node, cgroups and NVIDIA. A GPFS server is shown in the upper right with its cluster-level GPFS exporter. The exporters serve to make data availalble to the Prometheus database. Users interact with the Prometheus data via Grafana and the external tools (e.g., \texttt{gpudash}, \texttt{jobstats}).}
+  \Description{A diagram illustrating the Jobstats platform.}
+\end{figure}
+
+A central Prometheus server collects data from all of these exporters every $N$ seconds and stores it in its database with a retention of several months. We find a good choice to be $N=30$ seconds. Kunz et al.~\cite{pascal} used a value of 5 seconds. For quicker job statistics overviews and for long-term retention, a summary of individual job statistics is generated at job completion and stored in the Slurm database in the \texttt{AdminComment} field. This is done by a \texttt{slurmctld} epilog script that runs at job completion combined with a cleanup script that checks every 5 minutes if there are jobs that did not get the summary and then generates it. The format of the \texttt{AdminComment} data is described below.
+
+The \texttt{jobstats} command is used by users to display job efficiency summaries. For completed jobs this done by retrieving data from the \texttt{AdminComment} field while for actively running jobs it is done by querying the Prometheus database directly. The output includes per-node and overall CPU utilization and CPU memory usage as well as the analogous quantities for GPU jobs.
+
+Detailed job graphs are available on the Grafana server(s), usually via an Open OnDemand helper script that creates URLs with the appropriate jobids, start times and end times.
+
+Below is an outline of the steps that need to be taken to setup the Jobstats platform for a Slurm cluster:
+
+\begin{enumerate}
+\item Switch to cgroup based job accounting from Linux process accounting
+\item Setup the exporters: cgroup, node, GPU (on the nodes) and, optionally, GPFS (centrally)
+\item Setup the prolog.d and epilog.d scripts on the GPU nodes
+\item Setup the Prometheus server and configure it to scrape data from the compute nodes and all configured exporters
+\item For long-term job summary retention, setup the \texttt{slurmctldepilog.sh} script
+\item Lastly, configure Grafana and Open OnDemand.
+\end{enumerate}
+
+\noindent
+Each of the steps above are discussed in below. For additional instructions, URLs and scripts, see the Jobstats GitHub repository~\cite{jobstats_repo}.
+
+\subsection{CPU Utilization and CPU Memory}
+\label{cgroup_sec}
+
+Slurm has to be configured to track job accounting data via the \texttt{cgroup} plugin. This requires the following line in \texttt{slurm.conf}:
+
+\begin{verbatim}
+    JobAcctGatherType=jobacct_gather/cgroup
+\end{verbatim}
+
+\noindent
+The above is in addition to other usual \texttt{cgroup} related plug-ins/settings:
+
+\begin{verbatim}
+    ProctrackType=proctrack/cgroup
+    TaskPlugin=affinity,cgroup
+\end{verbatim}
+
+\noindent
+Slurm will then create two top-level \texttt{cgroup} directories for each job, one for CPU utilization and one for CPU memory. For example:
+
+\begin{verbatim}
+    /sys/fs/cgroup/cpu,cpuacct/slurm/uid_128322/job_247463
+    /sys/fs/cgroup/memory/slurm/uid_128322/job_247463
+\end{verbatim}
+
+\noindent
+Within each directory there will be subdirectories such as \texttt{step\_extern}, \texttt{step\_batch}, \texttt{step\_0}, \texttt{step\_1}, and so on. Within these directories one finds \texttt{task\_0}, \texttt{task\_1}, and so on. These cgroups are scraped by a \texttt{cgroup} exporter~\cite{cgroup_exporter}. Table~\ref{cpu_queries} lists all of the collected fields.
+
+\begin{table*}
+  \caption{cgroup metrics made available by the cgroups exporter.}
+  \label{cpu_queries}
+  \begin{tabular}{rrl}
+    \toprule
+    Name & Description & Type\\
+    \midrule
+cgroup\_cpu\_system\_seconds & Cumulative CPU system seconds for jobid & gauge\\
+cgroup\_cpu\_total\_seconds & Cumulative CPU total seconds for jobid & gauge\\
+cgroup\_cpu\_user\_seconds & Cumulative CPU user seconds for jobid & gauge\\
+cgroup\_cpus & Number of CPUs in the jobid & gauge\\
+cgroup\_memory\_cache\_bytes & Memory cache used in bytes & gauge\\
+cgroup\_memory\_fail\_count & Memory fail count & gauge\\
+cgroup\_memory\_rss\_bytes & Memory RSS used in bytes & gauge\\
+cgroup\_memory\_total\_bytes & Memory total given to jobid in bytes & gauge\\
+cgroup\_memory\_used\_bytes & Memory used in bytes & gauge\\
+cgroup\_memsw\_fail\_count & Swap fail count & gauge\\
+cgroup\_memsw\_total\_bytes & Swap total given to jobid in bytes & gauge\\
+cgroup\_memsw\_used\_bytes & Swap used in bytes & gauge\\
+cgroup\_uid & Uid number of user running this job & gauge\\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
+The \texttt{cgroup} exporter used here is based on that Ref.~\cite{cgroup_trey} with additional parsing of the jobid, steps, tasks and UID number. This produces an output that resembles (e.g., for system seconds):
+
+\begin{verbatim}
+    cgroup_cpu_system_seconds{jobid="247463",step="batch",task="0"} 160.92
+\end{verbatim}
+
+\noindent
+Note that the UID of the owning user is stored as a gauge in cgroup\_uid:
+
+\begin{verbatim}
+    cgroup_uid{jobid="247463"} 334987
+\end{verbatim}
+
+\noindent
+This is because accounting is job oriented and having a UID of the user as a label would needlessly increase the cardinality of the data in Prometheus. All other fields are alike with jobid, step and task labels.
+
+The totals for a job have an empty step and task, for example:
+
+\begin{verbatim}
+    cgroup_cpu_user_seconds{jobid="247463",step="",task=""} 202435.71
+\end{verbatim}
+
+\noindent
+This is due to the organization of the \texttt{cgroup} hierarchy:
+
+\begin{verbatim}
+   /sys/fs/cgroup/cpu,cpuacct/slurm/uid_334987/job_247463/cpuacct.usage_user
+   /sys/fs/cgroup/cpu,cpuacct/slurm/uid_334987/job_247463/step_extern/cpuacct.usage_user
+   /sys/fs/cgroup/cpu,cpuacct/slurm/uid_334987/job_247463/step_extern/task_0/cpuacct.usage_user
+\end{verbatim}
+
+This is the data most often retrieved and parsed for overall job efficiency which is why by default the cgroup\_exporter does not parse step or task data. To collect all of it, add the \texttt{-{}-collect.fullslurm} option. We run the cgroup\_exporter with these options:
+
+\begin{verbatim}
+    /usr/sbin/cgroup_exporter --config.paths /slurm --collect.fullslurm
+\end{verbatim}
+
+\noindent
+The \texttt{-{}-config.paths /slurm} has to match the path used by Slurm under the top \texttt{cgroup} directory (usually something like \texttt{/sys/fs/cgroup/memory/slurm}).
+
+\subsection{GPU Job Statistics}
+GPU metrics (currently only NVIDIA) are collected by our exporter~\cite{nvidia_exporter_plazonic} which was based on Ref.~\cite{nvidia_exporter_rohit}. The main local changes were to add the handling of Multi-Instance GPUs (MIG) and two additional gauge metrics: nvidia\_gpu\_jobId and nvidia\_gpu\_jobUid. Table~\ref{gpu_queries} lists all of the collected GPU fields. Note that the approach described here not appropriate for clusters that allow for GPU sharing (e.g., sharding). In Section~\ref{jobstats_tools}, we demonstrate how the GPU metrics stored in the Prometheus database can be queried by tools that generate dashboards and utilization reports.
+
+\begin{table*}
+  \caption{GPU metrics made available by the NVIDIA exporter.}
+  \label{gpu_queries}
+  \begin{tabular}{rrl}
+    \toprule
+    Name & Description & Type\\
+    \midrule
+    nvidia\_gpu\_duty\_cycle & GPU utilization & gauge \\
+    nvidia\_gpu\_memory\_total\_bytes & Total memory of the GPU device in bytes & gauge\\
+    nvidia\_gpu\_memory\_used\_bytes & Memory used by the GPU device in bytes & gauge\\
+    nvidia\_gpu\_num\_devices & Number of GPU devices & gauge\\
+    nvidia\_gpu\_power\_usage\_milliwatts & Power usage of the GPU device in milliwatts & gauge\\
+    nvidia\_gpu\_temperature\_celsius & Temperature of the GPU device in Celsius & gauge\\
+    nvidia\_gpu\_jobId & JobId number of a job currently using this GPU as reported by Slurm & gauge\\
+    nvidia\_gpu\_jobUid & Uid number of user running jobs on this GPU & gauge\\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
+
+\subsection{Node Specific Statistics}
+A standard node\_exporter runs on every node. This allows us to obtain other basic node metrics such as total memory available, memory in use, CPU frequencies, NFS stats, some Infiniband statistics and many other potentially useful data points. Spectrum Scale/GPFS stats are collected with a custom Python based exporter~\cite{gpfs_exporter}.
+
+\subsection{Generating Job Summaries}
+Job summaries, as described above, are generated and stored in the Slurm database at the end of each job by using a slurmctld epilog script. For example, in \texttt{slurm.conf}:
+
+\begin{verbatim}
+    EpilogSlurmctld=/usr/local/sbin/slurmctldepilog.sh
+\end{verbatim}
+
+\noindent
+The script is available in the Jobstats GitHub repository~\cite{gen_job_summary}.
+
+For storage efficiency and convenience, the JSON job summary data is gzipped and base64 encoded before being stored in the \texttt{AdminComment} field of the Slurm database.
+
+
+\subsection{Grafana and jobstats}
+The four exporters lead to a wealth of data in the Prometheus database. To visualize this data, the Grafana visualization toolkit~\cite{grafana} is used. The following \emph{job-level} metrics are available in both Grafana and the \texttt{jobstats} command:
+
+\begin{itemize}
+\item CPU Utilization
+\item CPU Memory Utilization
+\item GPU Utilization
+\item GPU Memory Utilization
+\end{itemize}
+
+\noindent
+The following additional \emph{job-level} metrics are exposed only in Grafana:
+
+\begin{itemize}
+\item GPU Temperature
+\item GPU Power Usage
+\end{itemize}
+
+\noindent
+Finally, the following additional \emph{node-level} metrics are exposed only in Grafana:
+
+\begin{itemize}
+\item CPU Percentage Utilization
+\item Total Memory Utilization
+\item Average CPU Frequency Over All CPUs
+\item NFS Stats
+\item Local Disc R/W
+\item GPFS Bandwidth Stats
+\item Local Disc IOPS
+\item GPFS Operations per Second Stats
+\item Infiniband Throughput
+\item Infiniband Packet Rate
+\item Infiniband Errors
+\end{itemize}
+
+Eleven of the seventeen metrics above are node-level. This means that if multiple jobs are running on the node then it will not be possible to disentangle the data. To use these metrics to troubleshoot jobs, the job should allocate the entire node.
+
+The complete Grafana interface for the Jobstats platform is composed of plots of the time history of the seventeen quantities above. An example of the Grafana dashboard and the needed code are available in the Jobstats GitHub repository~\cite{jobstats_repo}. This graphical interface is used for detailed investigations such as troubleshooting failed jobs, identifying jobs with CPU memory leaks, and for understanding the anomalous behavior of system hardware.
+
+While the Grafana interface is an essential component of the Jobstats platform, for quick inspections of job behavior, the \texttt{jobstats} command is used. This tool and four others are discussed in Section~\ref{jobstats_tools}.
