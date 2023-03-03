@@ -1,0 +1,36 @@
+\appendix
+
+\section{Prometheus Details}
+
+\subsection{GPU Jobs}
+\label{appendix_gpu_jobs}
+
+For efficiency and simplicity, JobId and jobUid are collected from files in \texttt{/run/gpustat/0} (for GPU 0), \texttt{/run/gpustat/1} (for GPU 1), and so on. For example:
+
+\begin{verbatim}
+    $ cat /run/gpustat/0
+    247609 223456
+\end{verbatim}
+
+\noindent
+In the above, the first number is the jobid and the second is the UID number for that job's owning user. These are created with Slurm prolog.d and epilog.d scripts that can be found in the Jobstats GitHub repository~\cite{prolog_epilog}.
+
+\subsection{Procedure for Modifying User Email Reports}
+\label{replace_seff}
+To generate email reports using \texttt{jobstats} after a job finishes, the following line is needed in \texttt{slurm.conf}:
+
+\begin{verbatim}
+    MailProg=/usr/local/bin/jobstats_mail.sh
+\end{verbatim}
+
+\noindent
+Here are the key lines in the \texttt{jobstats\_mail.sh} script:
+
+\begin{verbatim}
+    SEFF=/usr/local/bin/jobstats --no-color
+    $SEFF $jobid | $MAIL -s "$subject" $recipient
+\end{verbatim}
+
+\noindent
+One also needs to set the \texttt{content-type} to \texttt{text/html} so that the email uses a fixed-width font.
+The full script is available in the Jobstats GitHub repository~\cite{mail_script}.
